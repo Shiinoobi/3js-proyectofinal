@@ -14,6 +14,9 @@ new RGBELoader()
   .load('night.hdr', (texture) => {
     texture.mapping = THREE.EquirectangularReflectionMapping
     scene.environment = texture
+  }, undefined, (error) => {
+    // eslint-disable-next-line no-console
+    console.error('Error loading HDR:', error)
   })
 
 /* -----------------------------------------------------
@@ -61,7 +64,7 @@ scene.add(smallLight)
    GLOW + CONO VOLÉTRICO (BASE)
 ----------------------------------------------------- */
 const coneGeo = new THREE.ConeGeometry(1.2, 3.8, 32, 1, true)
-const coneMat = new THREE.MeshBasicMaterial({
+const createConeMaterial = () => new THREE.MeshBasicMaterial({
   color: 0xffe3b8,
   transparent: true,
   opacity: 0.25,
@@ -125,7 +128,7 @@ loader.load(
         scene.add(glow)
 
         // Cono de luz volumétrico
-        const cone = new THREE.Mesh(coneGeo, coneMat)
+        const cone = new THREE.Mesh(coneGeo, createConeMaterial())
         cone.position.copy(pos).add(new THREE.Vector3(0, -0.2, 0))
         cone.rotation.x = Math.PI
         cone.scale.set(1.4, 1.4, 1.4)
