@@ -1,23 +1,13 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import { RGBELoader } from 'three/addons/loaders/RGBELoader.js'
 
 /* -----------------------------------------------------
    SCENE
 ----------------------------------------------------- */
 const scene = new THREE.Scene()
-
-// HDR
-new RGBELoader()
-  .setPath('static/sky/')
-  .load('night.hdr', (texture) => {
-    texture.mapping = THREE.EquirectangularReflectionMapping
-    scene.environment = texture
-  }, undefined, (error) => {
-    // eslint-disable-next-line no-console
-    console.error('Error loading HDR:', error)
-  })
+scene.background = new THREE.Color(0x08090f)
+scene.fog = new THREE.FogExp2(0x0a0c12, 0.05)
 
 /* -----------------------------------------------------
    RENDERER
@@ -26,174 +16,222 @@ const renderer = new THREE.WebGLRenderer({ antialias: true })
 renderer.setSize(window.innerWidth, window.innerHeight)
 renderer.shadowMap.enabled = true
 renderer.shadowMap.type = THREE.PCFSoftShadowMap
-renderer.toneMappingExposure = 0.8
+renderer.toneMappingExposure = 0.75
+renderer.physicallyCorrectLights = true
 document.body.appendChild(renderer.domElement)
 
 /* -----------------------------------------------------
    CAMERA + CONTROLS
 ----------------------------------------------------- */
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000)
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000)
 camera.position.set(0, 2, 5)
 
 const controls = new OrbitControls(camera, renderer.domElement)
 controls.enableDamping = true
 controls.dampingFactor = 0.05
-controls.enablePan = true
-controls.enableZoom = true
 controls.minPolarAngle = 0.4
 controls.maxPolarAngle = 1.4
 
 /* -----------------------------------------------------
-   LIGHTS
+   SUNSET LIGHTING
 ----------------------------------------------------- */
-scene.add(new THREE.AmbientLight(0x445566, 0.15))
+scene.background = new THREE.Color(0xffb380)
+scene.fog = new THREE.FogExp2(0xffc9a6, 0.035)
 
-// Luz principal (moonlight)
-const moonLight = new THREE.DirectionalLight(0x88aaff, 0.35)
-moonLight.position.set(-4, 6, -2)
-moonLight.castShadow = true
-moonLight.shadow.mapSize.set(1024, 1024)
-scene.add(moonLight)
+const ambientSunset = new THREE.AmbientLight(0xffd1a3, 0.55)
+scene.add(ambientSunset)
 
-// Luz de relleno pequeña
-const smallLight = new THREE.PointLight(0x7799ff, 0.2)
-smallLight.position.set(1, 2, 1)
-scene.add(smallLight)
+const sunsetLight = new THREE.DirectionalLight(0xffbb66, 3.8)
+sunsetLight.position.set(20, 12, -10)
+sunsetLight.castShadow = true
+sunsetLight.shadow.bias = -0.0003
+sunsetLight.shadow.mapSize.set(2048, 2048)
+scene.add(sunsetLight)
+
+const sunGeo = new THREE.SphereGeometry(1.8, 32, 32)
+const sunMat = new THREE.MeshBasicMaterial({
+  color: 0xffdd88,
+  emissive: 0xffaa44,
+  emissiveIntensity: 3.5
+})
+const sun = new THREE.Mesh(sunGeo, sunMat)
+sun.position.set(50, 15, -20)
+scene.add(sun)
 
 /* -----------------------------------------------------
-   GLOW + CONO VOLÉTRICO (BASE)
+   DAY / NIGHT CYCLE
 ----------------------------------------------------- */
-const coneGeo = new THREE.ConeGeometry(1.2, 3.8, 32, 1, true)
-const createConeMaterial = () => new THREE.MeshBasicMaterial({
-  color: 0xffe3b8,
-  transparent: true,
-  opacity: 0.25,
-  blending: THREE.AdditiveBlending,
-  side: THREE.DoubleSide
-})
+let time = 0
+const sunLight = sunsetLight
+const sunSphere = sun
+
+const DAY_SKY = new THREE.Color(0x87ceeb)
+const SUNSET_SKY = new THREE.Color(0xffb380)
+const NIGHT_SKY = new THREE.Color(0x08090f)
+
+const DAY_FOG = new THREE.Color(0xbfd1e5)
+const SUNSET_FOG = new THREE.Color(0xffc9a6)
+const NIGHT_FOG = new THREE.Color(0x0a0c12)
+
+function updateDayNightCycle(delta) {
+  if (!sunLight || !sunSphere) return
+  time += delta * 0.05
+  const cycle = (Math.sin(time) + 1) / 2
+
+  const sunX = Math.sin(time) * 60
+  const sunY = Math.cos(time) * 35
+  sunLight.position.set(sunX, sunY, -20)
+  sunSphere.position.set(sunX, sunY, -20)
+
+  const sunIntensity = THREE.MathUtils.lerp(0.0, 4.0, cycle)
+  sunLight.intensity = sunIntensity
+  sunSphere.material.emissiveIntensity = sunIntensity * 0.5
+
+  if (cycle < 0.25) {
+    scene.background.lerpColors(NIGHT_SKY, NIGHT_SKY, 1)
+    scene.fog.color.lerpColors(NIGHT_FOG, NIGHT_FOG, 1)
+  } else if (cycle < 0.40) {
+    let t = (cycle - 0.25) / 0.15
+    scene.background.lerpColors(NIGHT_SKY, SUNSET_SKY, t)
+    scene.fog.color.lerpColors(NIGHT_FOG, SUNSET_FOG, t)
+  } else if (cycle < 0.75) {
+    let t = (cycle - 0.40) / 0.35
+    scene.background.lerpColors(SUNSET_SKY, DAY_SKY, t)
+    scene.fog.color.lerpColors(SUNSET_FOG, DAY_FOG, t)
+  } else {
+    let t = (cycle - 0.75) / 0.25
+    scene.background.lerpColors(DAY_SKY, SUNSET_SKY, t)
+    scene.fog.color.lerpColors(DAY_FOG, SUNSET_FOG, t)
+  }
+}
 
 /* -----------------------------------------------------
    LOAD MODEL
 ----------------------------------------------------- */
 const loader = new GLTFLoader()
+let cityModel
+const pedestrians = []
 
 loader.load(
-  'static/models/Final Proyect.glb',
+  'static/models/city.gltf',
   (gltf) => {
-    const model = gltf.scene
+    cityModel = gltf.scene
 
-    // Convertir materiales básicos a Standard y añadir emissive a bulbos
-    model.traverse((child) => {
-      if (!child.isMesh) return
+    cityModel.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true
+        child.receiveShadow = true
 
-      child.castShadow = true
-      child.receiveShadow = true
+        if (child.material?.isMeshBasicMaterial) {
+          child.material = new THREE.MeshStandardMaterial({
+            map: child.material.map || null,
+            roughness: 0.1,
+            metalness: 0.4
+          })
+        }
 
-      if (child.material?.isMeshBasicMaterial) {
-        child.material = new THREE.MeshStandardMaterial({
-          map: child.material.map || null,
-          emissive: new THREE.Color(0xfff4d6),
-          emissiveIntensity: 2.5 // Emisión más fuerte
-        })
+        if (child.name.toLowerCase().includes("ground")) {
+          child.material.roughness = 0.05
+          child.material.metalness = 0.65
+        }
       }
     })
 
-    scene.add(model)
+    scene.add(cityModel)
 
-    // Sistema de luces de lámparas
-    model.traverse((child) => {
-      if (!child.isMesh) return
+    // Street Lamps
+    const lampNames = ["Lamp", "StreetLamp", "Light", "Post", "Bulb"]
+    cityModel.traverse((obj) => {
+      if (!obj.isMesh) return
+      if (lampNames.some(n => obj.name.includes(n))) {
+        const pos = obj.getWorldPosition(new THREE.Vector3())
+        const light = new THREE.PointLight(0xfff2cc, 3.2, 14, 1.4)
+        light.position.copy(pos)
+        light.castShadow = true
+        light.shadow.bias = -0.0002
+        scene.add(light)
 
-      if (/^Lamp\d+$/i.test(child.name)) {
-        const pos = child.getWorldPosition(new THREE.Vector3())
-
-        // Luz principal de la lámpara (más intensa)
-        const lampLight = new THREE.PointLight(0xffe3b8, 25, 30, 1.2)
-        lampLight.position.copy(pos).add(new THREE.Vector3(0, 1.2, 0))
-        lampLight.castShadow = true
-        lampLight.shadow.mapSize.set(1024, 1024)
-        lampLight.shadow.bias = -0.0002
-        scene.add(lampLight)
-
-        // Glow más visible
-        const glowGeo = new THREE.SphereGeometry(0.22, 16, 16)
-        const glowMat = new THREE.MeshBasicMaterial({
-          color: 0xfff4d6,
-          transparent: true,
-          opacity: 1.0,
-          blending: THREE.AdditiveBlending
-        })
-        const glow = new THREE.Mesh(glowGeo, glowMat)
-        glow.position.copy(pos).add(new THREE.Vector3(0, 1.2, 0))
-        scene.add(glow)
-
-        // Cono de luz volumétrico
-        const cone = new THREE.Mesh(coneGeo, createConeMaterial())
-        cone.position.copy(pos).add(new THREE.Vector3(0, -0.2, 0))
-        cone.rotation.x = Math.PI
-        cone.scale.set(1.4, 1.4, 1.4)
-        scene.add(cone)
+        const bulb = new THREE.Mesh(
+          new THREE.SphereGeometry(0.08, 16, 16),
+          new THREE.MeshBasicMaterial({
+            color: 0xffcc00,
+            emissive: 0xffcc00,
+            emissiveIntensity: 2.5,
+            transparent: true,
+            opacity: 1
+          })
+        )
+        bulb.position.copy(pos)
+        scene.add(bulb)
       }
     })
+
+    /* -----------------------------------------------------
+       PEDESTRIANS (center 30% area)
+    ----------------------------------------------------- */
+    const PEDESTRIAN_AREA_SIZE = 0.3 * 20 // adjust 20 to approx city size
+    const pedestrianGeo = new THREE.CapsuleGeometry(0.2, 0.8, 4, 8)
+    const pedestrianMat = new THREE.MeshStandardMaterial({
+      color: 0x3333ff,
+      roughness: 0.7,
+      metalness: 0.0
+    })
+
+    for (let i = 0; i < 8; i++) {
+      const ped = new THREE.Mesh(pedestrianGeo, pedestrianMat)
+      ped.position.set(
+        (Math.random() - 0.5) * PEDESTRIAN_AREA_SIZE,
+        0.4,
+        (Math.random() - 0.5) * PEDESTRIAN_AREA_SIZE
+      )
+      ped.castShadow = true
+      ped.receiveShadow = false
+
+      // Slow walking speed
+      const speed = 0.02 + Math.random() * 0.01 // ~0.02–0.03 units per frame
+      const angle = Math.random() * Math.PI * 2
+      ped.userData.velocity = new THREE.Vector3(
+        Math.cos(angle) * speed,
+        0,
+        Math.sin(angle) * speed
+      )
+      scene.add(ped)
+      pedestrians.push(ped)
+    }
   },
   undefined,
   console.error
 )
 
 /* -----------------------------------------------------
-   VOLUMETRIC RAIN
+   RAIN
 ----------------------------------------------------- */
 const RAIN_COUNT = 900
 const RAIN_AREA = 30
 const RAIN_HEIGHT = 25
-
 const dropGeo = new THREE.CylinderGeometry(0.01, 0.01, 0.5, 6)
-const dropMat = new THREE.MeshBasicMaterial({
-  color: 0x99ccff,
-  transparent: true,
-  opacity: 0.7
-})
+const dropMat = new THREE.MeshBasicMaterial({ color: 0x99ccff, transparent: true, opacity: 0.7 })
 const rainMesh = new THREE.InstancedMesh(dropGeo, dropMat, RAIN_COUNT)
 scene.add(rainMesh)
-
-const dropPositions = []
-const dropVelocities = []
+const dropPositions = [], dropVelocities = []
 
 for (let i = 0; i < RAIN_COUNT; i++) {
-  dropPositions.push(
-    new THREE.Vector3(
-      (Math.random() - 0.5) * RAIN_AREA,
-      Math.random() * RAIN_HEIGHT,
-      (Math.random() - 0.5) * RAIN_AREA
-    )
-  )
+  dropPositions.push(new THREE.Vector3((Math.random() - 0.5) * RAIN_AREA, Math.random() * RAIN_HEIGHT, (Math.random() - 0.5) * RAIN_AREA))
   dropVelocities.push(new THREE.Vector3(0, -1.2 - Math.random() * 0.5, 0))
 }
 
 /* -----------------------------------------------------
-   SPLASH
+   SPLASHES
 ----------------------------------------------------- */
 const SPLASH_COUNT = 300
 const splashGeo = new THREE.CircleGeometry(0.05, 8)
-const splashMat = new THREE.MeshBasicMaterial({
-  color: 0x99ccff,
-  transparent: true,
-  opacity: 0.5,
-  depthWrite: false,
-  side: THREE.DoubleSide
-})
+const splashMat = new THREE.MeshBasicMaterial({ color: 0x99ccff, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide })
 const splashMesh = new THREE.InstancedMesh(splashGeo, splashMat, SPLASH_COUNT)
 scene.add(splashMesh)
 
 let splashData = []
 for (let i = 0; i < SPLASH_COUNT; i++) {
-  splashData.push({
-    active: false,
-    age: 0,
-    maxAge: 12 + Math.random() * 6,
-    pos: new THREE.Vector3(),
-    scale: 0.05
-  })
+  splashData.push({ active: false, age: 0, maxAge: 12 + Math.random() * 6, pos: new THREE.Vector3(), scale: 0.05 })
   const m = new THREE.Matrix4()
   m.makeScale(0.0001, 0.0001, 0.0001)
   splashMesh.setMatrixAt(i, m)
@@ -201,59 +239,43 @@ for (let i = 0; i < SPLASH_COUNT; i++) {
 splashMesh.instanceMatrix.needsUpdate = true
 
 /* -----------------------------------------------------
-   UPDATE RAIN
+   UPDATE RAIN & SPLASHES
 ----------------------------------------------------- */
 function updateVolumetricRain() {
   const m = new THREE.Matrix4()
   for (let i = 0; i < RAIN_COUNT; i++) {
     const pos = dropPositions[i]
     const vel = dropVelocities[i]
-
     pos.add(vel)
-
     if (pos.y < 0) {
-      // splash
       for (let s = 0; s < SPLASH_COUNT; s++) {
         const sp = splashData[s]
         if (!sp.active) {
-          sp.active = true
-          sp.age = 0
-          sp.scale = 0.05
-          sp.pos.set(pos.x, 0.01, pos.z)
+          sp.active = true; sp.age = 0; sp.scale = 0.05; sp.pos.set(pos.x, 0.01, pos.z)
           break
         }
       }
-
-      // reset drop
       pos.y = RAIN_HEIGHT
       pos.x = (Math.random() - 0.5) * RAIN_AREA
       pos.z = (Math.random() - 0.5) * RAIN_AREA
     }
-
     m.makeTranslation(pos.x, pos.y, pos.z)
     rainMesh.setMatrixAt(i, m)
   }
   rainMesh.instanceMatrix.needsUpdate = true
 }
 
-/* -----------------------------------------------------
-   UPDATE SPLASHES
------------------------------------------------------ */
 function updateSplashes() {
   const m = new THREE.Matrix4()
   for (let i = 0; i < SPLASH_COUNT; i++) {
     const sp = splashData[i]
     if (!sp.active) continue
-
-    sp.age++
-    sp.scale += 0.025
+    sp.age++; sp.scale += 0.025
     const opacity = THREE.MathUtils.lerp(0.5, 0.0, sp.age / sp.maxAge)
     splashMat.opacity = opacity
-
     m.makeScale(sp.scale, sp.scale, sp.scale)
     m.setPosition(sp.pos)
     splashMesh.setMatrixAt(i, m)
-
     if (sp.age >= sp.maxAge) {
       sp.active = false
       const m0 = new THREE.Matrix4()
@@ -267,13 +289,28 @@ function updateSplashes() {
 /* -----------------------------------------------------
    ANIMATION LOOP
 ----------------------------------------------------- */
+let lastTime = performance.now()
 function animate() {
+  const now = performance.now()
+  const delta = (now - lastTime) / 1000
+  lastTime = now
+
   controls.update()
+  updateDayNightCycle(delta)
   updateVolumetricRain()
   updateSplashes()
+
+  // Update pedestrian movement
+  pedestrians.forEach(ped => {
+    const vel = ped.userData.velocity
+    ped.position.add(vel)
+    // Keep inside central area
+    if (ped.position.x > 0.3 * 10 || ped.position.x < -0.3 * 10) vel.x *= -1
+    if (ped.position.z > 0.3 * 10 || ped.position.z < -0.3 * 10) vel.z *= -1
+  })
+
   renderer.render(scene, camera)
 }
-
 renderer.setAnimationLoop(animate)
 
 /* -----------------------------------------------------
