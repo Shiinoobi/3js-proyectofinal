@@ -106,6 +106,76 @@ function updateDayNightCycle(delta) {
 }
 
 /* -----------------------------------------------------
+   3D CLOUDS
+----------------------------------------------------- */
+const CLOUD_COUNT = 30
+const clouds = []
+
+for (let i = 0; i < CLOUD_COUNT; i++) {
+  const cloud = new THREE.Group()
+  const puffCount = 3 + Math.floor(Math.random() * 3) // 3–5 puffs per cloud
+
+  for (let j = 0; j < puffCount; j++) {
+    const radius = 2 + Math.random() * 1.5
+    const geo = new THREE.SphereGeometry(radius, 16, 16)
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.3 + Math.random() * 0.2,
+      roughness: 0.9,
+      metalness: 0,
+      depthWrite: false
+    })
+    const puff = new THREE.Mesh(geo, mat)
+    puff.position.set(
+      (Math.random() - 0.5) * 3,
+      (Math.random() - 0.5) * 1,
+      (Math.random() - 0.5) * 3
+    )
+    cloud.add(puff)
+  }
+
+  cloud.position.set(
+    (Math.random() - 0.5) * 50,
+    12 + Math.random() * 1, // height above city
+    (Math.random() - 0.5) * 50
+  )
+  cloud.rotation.y = Math.random() * Math.PI * 2
+  scene.add(cloud)
+  clouds.push(cloud)
+}
+
+/* -----------------------------------------------------
+   UPDATE 3D CLOUDS
+----------------------------------------------------- */
+function updateClouds(delta) {
+  clouds.forEach(cloud => {
+    cloud.position.x += delta * 0.5 // slow drift
+    cloud.position.z += delta * 0.2
+    if (cloud.position.x > 25) cloud.position.x = -25
+    if (cloud.position.z > 25) cloud.position.z = -25
+
+    // Optional: small rotation for more natural effect
+    cloud.rotation.y += delta * 0.02
+  })
+}
+
+/* -----------------------------------------------------
+   DAY/NIGHT CLOUD COLOR UPDATE
+----------------------------------------------------- */
+function updateCloudColors() {
+  clouds.forEach(cloud => {
+    cloud.children.forEach(puff => {
+      // Color changes with sun intensity
+      const intensity = sunLight.intensity
+      const color = new THREE.Color().setHSL(0.6, 0.3, 0.5 * intensity + 0.2) // bluish daytime, darker at night
+      puff.material.color.copy(color)
+    })
+  })
+}
+
+
+/* -----------------------------------------------------
    LOAD MODEL
 ----------------------------------------------------- */
 const loader = new GLTFLoader()
@@ -299,6 +369,9 @@ function animate() {
   updateDayNightCycle(delta)
   updateVolumetricRain()
   updateSplashes()
+  updateClouds(delta)
+  updateCloudColors()
+
 
   // Update pedestrian movement
   pedestrians.forEach(ped => {
